@@ -21,8 +21,7 @@ for microcontroller projects using graphical LCDs or LED matrix displays.
 
 To contact the author please address:
 
-Nathan Dumont
-hairymnstr@gmail.com
+Nathan Dumont (<nathan@nathandumont.com>)
 
 For latest information visit <https://nathandumont.com/blog/bitmap-font-editor-tool>
 
