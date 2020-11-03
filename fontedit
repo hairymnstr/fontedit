@@ -1,0 +1,730 @@
+#!/usr/bin/env python
+##
+##    This file is part of Fontedit.
+##    Copyright 2010 Nathan Dumont
+##
+##    Fontedit is free software: you can redistribute it and/or modify
+##    it under the terms of the GNU General Public License as published by
+##    the Free Software Foundation, either version 3 of the License, or
+##    (at your option) any later version.
+##
+##    Fontedit is distributed in the hope that it will be useful,
+##    but WITHOUT ANY WARRANTY; without even the implied warranty of
+##    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##    GNU General Public License for more details.
+##
+##    You should have received a copy of the GNU General Public License
+##    along with Fontedit.  If not, see <http://www.gnu.org/licenses/>.
+##
+
+import sys, os
+import pygtk
+import gtk, gobject
+import cPickle
+
+if gtk.pygtk_version < (2,6):
+  print "PyGTK 2.6 or later required for this widget"
+  sys.exit(-1)
+
+from char_widget import CharacterWidget
+from viewfont_widget import FontViewWidget
+from libasc import asc_char, asc_desc
+from internal_font_class import Font
+#from exporters_init import exporters_init
+
+#exporters_init()
+
+#import exporters
+sys.path.append(os.path.join(sys.path[0], "exporters"))
+
+class ValidEntry(gtk.Entry):
+  """ A sub-class of gtkentry with an input validator.  Text is only inserted
+      if the test function returns True """
+  def __init__(self, test_func, tl=0):
+    gtk.Entry.__init__(self, tl)
+    self._test_func = test_func
+    self.handler_ids = {}
+
+    self.handler_ids['insert-text'] = self.connect('insert-text',
+                                                   self.on_entry_validate)
+
+  def on_entry_validate(self, entry, text, length, *kw):
+    entry.stop_emission('insert-text')
+    entry.handler_block(self.handler_ids['insert-text'])
+    pos = entry.get_position()
+
+    tt = entry.get_text()
+
+    tt = tt[:pos] + text + tt[pos:]
+
+    if self._test_func(tt):
+      entry.insert_text(text, pos)
+      gobject.idle_add(lambda: entry.set_position(pos +length))
+
+    entry.handler_unblock(self.handler_ids['insert-text'])
+    return 0
+
+class NewDialog(gtk.Window):
+  def __init__(self, parent):
+    gtk.Window.__init__(self)
+    self._parent = parent
+
+    self.set_title("New Font")
+
+    self.layout = gtk.Table(5, 2)
+    self.add(self.layout)
+    
+    chars_label = gtk.Label("Total Characters:")
+    chars_label.set_alignment(1.0, 0.5)
+    self.layout.attach(chars_label, 0, 1, 0, 1)
+    self.chars_field = ValidEntry(self.check_chars, 5)
+    self.chars_field.set_text("256")
+    self.layout.attach(self.chars_field, 1, 2, 0, 1)
+
+    height_label = gtk.Label("Character Height/px:")
+    height_label.set_alignment(1.0, 0.5)
+    self.layout.attach(height_label, 0, 1, 1, 2)
+    self.height_field = ValidEntry(self.check_size, 2)
+    self.height_field.set_text("16")
+    self.layout.attach(self.height_field, 1, 2, 1, 2)
+
+    width_label = gtk.Label("Character Width/px:")
+    width_label.set_alignment(1.0, 0.5)
+    self.layout.attach(width_label, 0, 1, 2, 3)
+    self.width_field = ValidEntry(self.check_size, 2)
+    self.width_field.set_text("8")
+    self.layout.attach(self.width_field, 1, 2, 2, 3)
+
+    self.button_layout = gtk.HButtonBox()
+    self.button_layout.set_layout(gtk.BUTTONBOX_END)
+    self.new_button = gtk.Button(stock=gtk.STOCK_NEW)
+    self.new_button.connect("clicked", self.new_cb)
+    self.button_layout.pack_end(self.new_button)
+    self.cancel_button = gtk.Button(stock=gtk.STOCK_CANCEL)
+    self.cancel_button.connect("clicked", self.cancel_cb)
+    self.button_layout.pack_end(self.cancel_button)
+    self.layout.attach(self.button_layout, 0, 2, 4, 5)
+
+    self._parent.set_sensitive(False)
+    self.connect("destroy", self.cancel_cb)
+
+    self.show_all()
+
+  def cancel_cb(self, *kw):
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del(self)
+
+  def new_cb(self, *kw):
+    if self.chars_field.get_text() == "":
+      self.notify("The number of characters must be specified.")
+      return
+    elif self.height_field.get_text() == "":
+      self.notify("The height in pixels must be specified.")
+      return
+    elif self.width_field.get_text() == "":
+      self.notify("The width in pixels must be specified.")
+      return
+
+    chars = int(self.chars_field.get_text())
+    height = int(self.height_field.get_text())
+    width = int(self.width_field.get_text())
+
+    self._parent.filename = ""
+    self._parent.font = Font(height, width, chars)
+    self._parent.load()
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del self
+
+  def notify(self, message):
+    self.set_sensitive(False)
+    self.msg_box = gtk.MessageDialog(parent=self, buttons=gtk.BUTTONS_OK, 
+                       message_format=message)
+    self.msg_box.connect("response", self.msg_response)
+    self.msg_box.show()
+
+  def msg_response(self, *kw):
+    self.msg_box.destroy()
+    del self.msg_box
+    self.set_sensitive(True)
+
+  def check_chars(self, text):
+    try:
+      a = int(text)
+      if a > 65535:
+        return False
+    except:
+      return False
+    return True
+
+  def check_size(self, text):
+    try:
+      a = int(text)
+      if a > 32:
+        return False
+    except:
+      return False
+    return True
+
+class PrefsWindow(gtk.Window):
+  def __init__(self, parent):
+    gtk.Window.__init__(self)
+    self._parent = parent
+    self.table = gtk.Table(3, 2)
+    self.add(self.table)
+
+    self.fg_label = gtk.Label("Foreground Colour")
+    self.table.attach(self.fg_label, 0, 1, 0, 1)
+  
+    self.bg_label = gtk.Label("Background Color")
+    self.table.attach(self.bg_label, 0, 1, 1, 2)
+
+    self.fg_edit = gtk.ColorButton(gtk.gdk.Color(
+                        self._parent.font.fg['r'],
+                        self._parent.font.fg['g'],
+                        self._parent.font.fg['b']))
+    self.fg_edit.set_title("Foreground Colour")
+    self.table.attach(self.fg_edit, 1, 2, 0, 1)
+
+    self.bg_edit = gtk.ColorButton(gtk.gdk.Color(
+                        self._parent.font.bg['r'],
+                        self._parent.font.bg['g'],
+                        self._parent.font.bg['b']))
+    self.bg_edit.set_title("Background Colour")
+    self.table.attach(self.bg_edit, 1, 2, 1, 2)
+
+    self.button_layout = gtk.HButtonBox()
+    self.button_layout.set_layout(gtk.BUTTONBOX_END)
+    self.ok_button = gtk.Button(stock=gtk.STOCK_OK)
+    self.ok_button.connect("clicked", self.ok_cb)
+    self.button_layout.pack_end(self.ok_button)
+    self.cancel_button = gtk.Button(stock=gtk.STOCK_CANCEL)
+    self.cancel_button.connect("clicked", self.cancel_cb)
+    self.button_layout.pack_end(self.cancel_button)
+    self.table.attach(self.button_layout, 0, 2, 2, 3)
+
+    self.connect("destroy", self.cancel_cb)
+
+    self._parent.set_sensitive(False)
+    self.show_all()
+
+  def cancel_cb(self, *kw):
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del self
+
+  def ok_cb(self, *kw):
+    fg = self.fg_edit.get_color()
+    bg = self.bg_edit.get_color()
+    self._parent.font.fg['r'] = fg.red
+    self._parent.font.fg['g'] = fg.green
+    self._parent.font.fg['b'] = fg.blue
+    self._parent.font.bg['r'] = bg.red
+    self._parent.font.bg['g'] = bg.green
+    self._parent.font.bg['b'] = bg.blue
+    self._parent.update_colours()
+
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del self
+
+class ExportWindow(gtk.Window):
+  def __init__(self, parent):
+    gtk.Window.__init__(self)
+
+    self.set_title("Export")
+    self._parent = parent
+
+    self.layout = gtk.VBox()
+    self.layout.set_border_width(5)
+
+    self.fsf = gtk.Frame("Select Filename")
+
+    self.file_select = gtk.FileChooserWidget(action=gtk.FILE_CHOOSER_ACTION_SAVE)
+
+    self.fsf.add(self.file_select)
+
+    self.layout.pack_start(self.fsf)
+
+    self.sub_layout = gtk.VBox()
+    self.export_frame = gtk.Frame("Select Format")
+    self.export_frame.add(self.sub_layout)
+    self.layout.pack_start(self.export_frame, expand=False)
+    self.exporters = gtk.combo_box_new_text()
+
+    # generate a list of exporters
+    self.export_details = []
+    files = os.listdir(os.path.join(sys.path[0], "exporters"))
+    for f in files:
+      prt = os.path.splitext(f)
+      if prt[1] == ".py":
+        self.export_details.append({"module": 
+                    __import__(prt[0], globals(), locals(), [], -1)})
+        self.export_details[-1].update(self.export_details[-1]['module'].exporters)
+
+    for e in self.export_details:
+      self.exporters.append_text(e['name'])
+
+    self.exporters.set_active(0)
+
+    self.sub_layout.pack_start(self.exporters)
+
+    self.add(self.layout)
+
+    self.export_label = gtk.Label(self.export_details[0]['desc'])
+    self.sub_layout.pack_start(self.export_label)
+
+    self.button_layout = gtk.HButtonBox()
+    self.button_export = gtk.Button("_Export")
+    self.button_export.connect("clicked", self.export_cb)
+    self.button_cancel = gtk.Button(stock=gtk.STOCK_CANCEL)
+    self.button_cancel.connect("clicked", self.cancel_cb)
+    self.button_layout.pack_end(self.button_cancel)
+    self.button_layout.pack_end(self.button_export)
+    self.button_layout.set_layout(gtk.BUTTONBOX_END)
+    self.layout.pack_start(self.button_layout, expand=False)
+
+    self.connect("destroy", self.cancel_cb)
+
+    self._parent.set_sensitive(False)
+    self.show_all()
+
+  def cancel_cb(self, *kw):
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del self
+
+  def export_cb(self, *kw):
+    if self.file_select.get_filename() == "":
+      self.notify("You must select a file to export to.")
+      return
+    
+    # actually run the exporter
+    ret = self.export_details[self.exporters.get_active()]['func'](
+                                        self._parent.font, 
+                                        self.file_select.get_filename())
+
+    if isinstance(ret, str):
+      self.notify(ret)
+      return
+
+    self._parent.set_sensitive(True)
+    self.destroy()
+    del self
+
+  def notify(self, message):
+    self.set_sensitive(False)
+    self.msg_box = gtk.MessageDialog(parent=self, buttons=gtk.BUTTONS_OK, 
+                       message_format=message)
+    self.msg_box.connect("response", self.msg_response)
+    self.msg_box.show()
+
+  def msg_response(self, *kw):
+    self.msg_box.destroy()
+    del self.msg_box
+    self.set_sensitive(True)
+
+
+class MainWindow(gtk.Window):
+  def __init__(self):
+    gtk.Window.__init__(self, type=gtk.WINDOW_TOPLEVEL)
+    
+    self.main_vlayout = gtk.VBox()
+    self.add(self.main_vlayout)
+
+    self.menubar = gtk.MenuBar()
+    self.main_vlayout.pack_start(self.menubar, expand=False)
+
+    self.main_hlayout = gtk.HBox()
+    self.main_vlayout.pack_start(self.main_hlayout)
+
+    self.status_bar = gtk.Statusbar()
+    self.main_vlayout.pack_start(self.status_bar, expand=False)
+
+    # make the menus
+
+    ## File menu
+    self.file_mnu = gtk.Menu()
+    self.file_mnu_itm = gtk.MenuItem("_File")
+    self.file_mnu_itm.set_submenu(self.file_mnu)
+    self.menubar.append(self.file_mnu_itm)
+
+    ### New
+    self.new_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_NEW)
+    self.new_mnu_itm.connect("activate", self.new_cb)
+    self.file_mnu.append(self.new_mnu_itm)
+
+    ### ----
+    self.file_mnu.append(gtk.SeparatorMenuItem())
+
+    ### Open
+    self.open_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_OPEN)
+    self.open_mnu_itm.connect("activate", self.open_cb)
+    self.file_mnu.append(self.open_mnu_itm)
+
+    ### Save As
+    self.saveas_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_SAVE_AS)
+    self.saveas_mnu_itm.connect("activate", self.saveas_cb)
+    self.file_mnu.append(self.saveas_mnu_itm)
+
+    ### Save
+    self.save_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_SAVE)
+    self.save_mnu_itm.connect("activate", self.save_cb)
+    self.file_mnu.append(self.save_mnu_itm)
+
+    ### Export
+    self.export_mnu_itm = gtk.MenuItem("_Export")
+    self.export_mnu_itm.connect("activate", self.export_cb)
+    self.file_mnu.append(self.export_mnu_itm)
+
+    ### ---
+    self.file_mnu.append(gtk.SeparatorMenuItem())
+
+    ### Exit
+    self.exit_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_QUIT)
+    self.exit_mnu_itm.connect("activate", self.delete_cb)
+    self.file_mnu.append(self.exit_mnu_itm)
+
+    ## Edit menu
+    self.edit_mnu = gtk.Menu()
+    self.edit_mnu_itm = gtk.MenuItem("_Edit")
+    self.edit_mnu_itm.set_submenu(self.edit_mnu)
+    self.menubar.append(self.edit_mnu_itm)
+
+    ### Preferences
+    self.prefs_mnu_itm = gtk.ImageMenuItem(stock_id=gtk.STOCK_PREFERENCES)
+    self.prefs_mnu_itm.connect("activate", self.prefs_cb)
+    self.edit_mnu.append(self.prefs_mnu_itm)
+
+    # build the main UI
+    # make an initial font
+    self.font = Font(12, 8, 256)
+#   self._current_char = 0
+    self.font_view = None
+    self.font_widget = None
+
+    self.right_vlayout = gtk.VBox()
+    self.main_hlayout.pack_end(self.right_vlayout)
+
+    self.update_button = gtk.Button("Update")
+    self.update_button.connect("clicked", self.update_char_cb)
+
+    self.update_and_next_button = gtk.Button("Update and Next")
+    self.update_and_next_button.connect("clicked", self.update_and_next_cb)
+
+    hl = gtk.HBox()
+    self.char_no_lbl = gtk.Label(str(self.current_char))
+    self.char_asc_lbl = gtk.Label(asc_char[self.current_char])
+    self.char_desc_lbl = gtk.Label(asc_desc[self.current_char])
+
+    hl.pack_start(self.char_no_lbl)
+    hl.pack_start(self.char_asc_lbl)
+    hl.pack_start(self.char_desc_lbl)
+
+    hl2 = gtk.HBox()
+    self.next_btn = gtk.Button("Next")
+    self.next_btn.connect("clicked", self.next_cb)
+    self.prev_btn = gtk.Button("Prev")
+    self.prev_btn.connect("clicked", self.prev_cb)
+    hl2.pack_start(self.prev_btn)
+    hl2.pack_start(self.next_btn)
+
+    # pack in reverse order from the end so that the overview widget can
+    # be re-packed at the start if a new font is opened or created
+    self.right_vlayout.pack_end(hl2, expand=False)
+    self.right_vlayout.pack_end(hl, expand=False)
+    self.right_vlayout.pack_end(self.update_and_next_button, expand=False)
+    self.right_vlayout.pack_end(self.update_button, expand=False)
+
+    # add keyboard shortcuts
+    self.shortcuts = {}
+    self.shortcuts[32] = self.update_and_next_cb
+    self.connect("key-press-event", self.shortcut_cb)
+
+    self.connect("delete-event", self.delete_cb)
+    self.connect("destroy", self.destroy_cb)
+
+    self.filename = ""
+
+    self.load()
+
+    self.show_all()
+
+  def delete_cb(self, *kw):
+    if not self.check_saved(self.destroy):
+      return True
+    self.destroy()
+
+  def destroy_cb(self, *kw):
+    gtk.main_quit()
+
+  def new_cb(self, *kw):
+    if not self.check_saved(self.new_cb):
+      return
+    n = NewDialog(self)
+
+  def open_cb(self, *kw):
+    if not self.check_saved(self.new_cb):
+      return
+    self.open_dialog = gtk.FileChooserDialog(
+                       "Open Font",
+                       self,
+                       gtk.FILE_CHOOSER_ACTION_OPEN,
+                       (gtk.STOCK_OPEN,
+                        gtk.RESPONSE_ACCEPT,
+                        gtk.STOCK_CANCEL,
+                        gtk.RESPONSE_CANCEL))
+    if self.filename == "":
+      self.open_dialog.set_current_folder(os.path.expanduser("~/"))
+    else:
+      self.open_dialog.set_current_folder(os.path.split(self.filename)[0])
+
+    self.filter_fnt = gtk.FileFilter()
+    self.filter_fnt.set_name("FNT Files")
+    self.filter_fnt.add_pattern("*.fnt")
+    self.open_dialog.add_filter(self.filter_fnt)
+    self.filter_all = gtk.FileFilter()
+    self.filter_all.set_name("All Files")
+    self.filter_all.add_pattern("*")
+    self.open_dialog.add_filter(self.filter_all)
+    self.open_dialog.set_filter(self.filter_fnt)
+
+    self.open_dialog.connect("response", self.open_file_cb)
+    self.open_dialog.show()
+    self.set_sensitive(False)
+
+  def open_file_cb(self, widget, response):
+    """ Call back run when a file is selected in the open dialog. """
+    if response == gtk.RESPONSE_ACCEPT:
+      # user selected a file
+      self.filename = self.open_dialog.get_filename()
+      self.load_file()
+      self.load()
+    self.open_dialog.destroy()
+    del self.filter_all
+    del self.filter_fnt
+    del self.open_dialog
+    self.set_sensitive(True)
+
+  def save_cb(self, *kw):
+    if self.filename == "":
+      self.saveas_cb()
+    else:
+      self.dump_file()
+
+  def saveas_cb(self, *kw):
+    self.save_dialog = gtk.FileChooserDialog(
+                       "Save As",
+                       self,
+                       gtk.FILE_CHOOSER_ACTION_SAVE,
+                       (gtk.STOCK_SAVE,
+                        gtk.RESPONSE_ACCEPT,
+                        gtk.STOCK_CANCEL,
+                        gtk.RESPONSE_CANCEL))
+    if self.filename == "":
+      self.save_dialog.set_current_folder(os.path.expanduser("~/"))
+    else:
+      self.save_dialog.set_current_folder(os.path.split(self.filename)[0])
+
+    self.filter_fnt = gtk.FileFilter()
+    self.filter_fnt.set_name("FNT Files")
+    self.filter_fnt.add_pattern("*.fnt")
+    self.save_dialog.add_filter(self.filter_fnt)
+    self.filter_all = gtk.FileFilter()
+    self.filter_all.set_name("All Files")
+    self.filter_all.add_pattern("*")
+    self.save_dialog.add_filter(self.filter_all)
+    self.save_dialog.set_filter(self.filter_fnt)
+
+    self.save_dialog.connect("response", self.save_file_cb)
+    self.save_dialog.show()
+    self.set_sensitive(False)
+
+  def save_file_cb(self, widget, response):
+    if response == gtk.RESPONSE_ACCEPT:
+      self.filename = self.save_dialog.get_filename()
+      if ((self.save_dialog.get_filter() == self.filter_fnt) and
+          (os.path.splitext(self.filename)[1] == "")):
+        self.filename += ".fnt"
+      self.dump_file()
+    self.save_dialog.destroy()
+    del self.filter_fnt
+    del self.filter_all
+    del self.save_dialog
+    self.set_sensitive(True)
+
+  def dump_file(self):
+    self.font.changed = False       # don't want to save it with the editted flag!
+    fw = file(self.filename, "w")
+    p = cPickle.Pickler(fw)
+    p.dump(self.font)
+    fw.close()
+
+  def load_file(self):
+    fr = file(self.filename, "r")
+    p = cPickle.Unpickler(fr)
+    self.font = p.load()
+    fr.close()
+
+  def export_cb(self, *kw):
+    # make sure the font is fully up to date
+    if not self.check_update(self.export_cb):
+      return
+   
+    # show the export dialog
+    ed = ExportWindow(self)
+
+  def prefs_cb(self, *kw):
+    p = PrefsWindow(self)
+
+  def check_update(self, post_msg_call=None):
+    """ See if the character has been editted since the Font was last
+        updated, prompt the user to save or not and carry out their
+        choice before returning. """
+    if self.font_widget.modified:
+      self.msgbox = gtk.MessageDialog(parent=self,
+                   message_format="Save character before switching?")
+      self.msgbox.add_buttons(gtk.STOCK_YES, gtk.RESPONSE_YES,
+                              gtk.STOCK_NO, gtk.RESPONSE_NO,
+                              gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL)
+      self.msgbox.connect("response", self.msg_response, post_msg_call)
+      self.set_sensitive(False)
+      self.msgbox.show()
+      return False
+    return True
+
+  def msg_response(self, dialog, response_id, callback):
+    self.set_sensitive(True)    # need to do this first so pixels aren't diabled
+    if response_id == gtk.RESPONSE_YES:
+      # yes, save the character
+      self.update_char_cb()
+      if callback != None:
+        callback()
+    elif response_id == gtk.RESPONSE_NO:
+      # no, don't save but carry out the action
+      # mark the character as saved so we don't call this again
+      self.font_widget.clear_modified()
+      if callback != None:
+        callback()
+    # cancel, I didn't mean to do that
+    self.msgbox.destroy()
+    del self.msgbox
+
+  def check_saved(self, post_msg_call=None):
+    if not self.check_update(self.check_saved):
+      return False
+    if self.font.changed:
+      self.msgbox2 = gtk.MessageDialog(parent=self,
+                          message_format="Changes made, do you want to save?")
+      self.msgbox2.add_buttons(gtk.STOCK_YES, gtk.RESPONSE_YES,
+                               gtk.STOCK_NO, gtk.RESPONSE_NO,
+                               gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL)
+      self.msgbox2.connect("response", self.msg2_response, post_msg_call)
+      self.set_sensitive(False)
+      self.msgbox2.show()
+      return False
+    return True
+
+  def msg2_response(self, dialog, response_id, callback):
+    self.set_sensitive(True)
+    if response_id == gtk.RESPONSE_YES:
+      self.save_cb()
+    elif response_id == gtk.RESPONSE_NO:
+      self.font.changed = False
+      if callback != None:
+        callback()
+    self.msgbox2.destroy()
+    del self.msgbox2
+
+  def load(self):
+    """ Read all the info from self.font and build the UI """
+
+    if isinstance(self.font_widget, CharacterWidget):
+      self.font_widget.destroy()
+      del self.font_widget
+    self.font_widget = CharacterWidget(self.font)
+    self.main_hlayout.pack_start(self.font_widget, expand=False)
+
+    if isinstance(self.font_view, FontViewWidget):
+      self.font_view.destroy()
+      del self.font_view
+    self.font_view = FontViewWidget(self.font)
+    self.font_view.connect("select-char", self.select_char_cb)
+    self.right_vlayout.pack_start(self.font_view)
+
+    # looks redundant but because the active character is stored in the file
+    # it may have just changed and we need to update the UI
+    self.current_char = self.current_char
+
+    self.show_all()
+
+  def select_char_cb(self, widget, ind):
+    if not self.check_update(self.select_char_cb):
+      return
+    self.current_char = ind
+
+  def shortcut_cb(self, widget, event):
+    if self.shortcuts.has_key(event.keyval):
+      self.shortcuts[event.keyval]()
+      return True   # we used this one, don't let anyone else have it
+
+  def update_char_cb(self, *kw):
+    self.font.set_character(self.current_char, self.font_widget.get_pixels())
+    self.font_view.update(self.current_char)
+    self.font_widget.clear_modified()
+    self.show_all()
+
+  def update_and_next_cb(self, *kw):
+    self.update_char_cb()
+    self.next_cb()
+
+  def next_cb(self, *kw):
+    if not self.check_update(self.next_cb):
+      return
+    self.current_char = (self.current_char + 1) % self.font.chars
+
+  def prev_cb(self, *kw):
+    if not self.check_update(self.prev_cb):
+      return
+    self.current_char = (self.current_char - 1) % self.font.chars
+
+  def update_colours(self):
+    # update the widgets with new font colours
+    fg = self.font.fg
+    bg = self.font.bg
+    self.font_widget.set_fg(fg['r'], fg['g'], fg['b'])
+    self.font_widget.set_bg(bg['r'], bg['g'], bg['b'])
+    self.font_view.set_colours(fg['r'], fg['g'], fg['b'],
+                               bg['r'], bg['g'], bg['b'])
+    self.show_all()
+
+  ### current_char - property; modifying updates all relevant display elements
+  ###                automatically.  Make sure they're saved before modifying
+
+  def get_current_char(self):
+    """ Index of the character currently being editted.  Modifying this 
+        automatically updates the UI.  Be careful to save data before
+        modifying the character. """
+    return self.font.current
+
+  def set_current_char(self, val):
+    self.font.current = val
+
+    # update the labels
+    self.char_no_lbl.set_text(str(self.font.current))
+    self.char_asc_lbl.set_text(asc_char[self.font.current])
+    self.char_desc_lbl.set_text(asc_desc[self.font.current])
+    
+    # update the edit window
+    self.font_widget.set_pixels(self.font.get_character(self.font.current))
+
+    # update the preview widget
+    self.font_view.select(self.font.current)
+
+  current_char = property(get_current_char, set_current_char)
+
+if __name__ == "__main__":
+  win = MainWindow()
+  gtk.main()
+
