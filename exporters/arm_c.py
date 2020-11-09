@@ -45,36 +45,36 @@ def export(font, filename):
   postamble = """};\n"""
 
   # open a file for writing
-  fw = file(filename, "w")
+  with open(filename, "w") as fw:
+    
+    # write the pre-amble
+    fw.write(preamble)
 
-  # write the pre-amble
-  fw.write(preamble)
+    # itterate over all characters
+    for i in range(font.chars):
+      fw.write("  \"")
+      # fetch the array of pixels
+      c = font.get_character(i)
+      # itterate over the rows
+      for j in range(font.rows):
+        # do a shift to make a single byte bitmask of one row
+        b = 0
+        for k in range(font.cols):
+          b = (b << 1) | c[j][k]
+        # write the byte formatted as an escaped hex value for C
+        fw.write("\\x%02X" % b)
+      # add a handy comment at the end of the row if the char
+      # is a printable ascii character
+      if (i >= 32) and (i < 127):
+        comm = "  /* %c */" % i
+      else:
+        comm = ""
+      # write the end of the string and newline
+      fw.write("\",%s\n" % comm)
 
-  # itterate over all characters
-  for i in range(font.chars):
-    fw.write("  \"")
-    # fetch the array of pixels
-    c = font.get_character(i)
-    # itterate over the rows
-    for j in range(font.rows):
-      # do a shift to make a single byte bitmask of one row
-      b = 0
-      for k in range(font.cols):
-        b = (b << 1) | c[j][k]
-      # write the byte formatted as an escaped hex value for C
-      fw.write("\\x%02X" % b)
-    # add a handy comment at the end of the row if the char
-    # is a printable ascii character
-    if (i >= 32) and (i < 127):
-      comm = "  /* %c */" % i
-    else:
-      comm = ""
-    # write the end of the string and newline
-    fw.write("\",%s\n" % comm)
-
-  # finally write the closure of the C list and close the file
-  fw.write(postamble)
-  fw.close()
+    # finally write the closure of the C list and close the file
+    fw.write(postamble)
+  
   # return zero to indicate that we were successful
   return 0
 

@@ -1,6 +1,6 @@
 ##
 ##    This file is part of Fontedit.
-##    Copyright 2010 Nathan Dumont
+##    Copyright 2010-2020 Nathan Dumont
 ##
 ##    Fontedit is free software: you can redistribute it and/or modify
 ##    it under the terms of the GNU General Public License as published by
@@ -282,5 +282,5 @@ asc_desc[255] = ""
 
 if __name__ == "__main__":
   for i in range(256):
-    print asc_char[i],
-    print asc_desc[i]
+    print(asc_char[i], end='')
+    print(asc_desc[i])
