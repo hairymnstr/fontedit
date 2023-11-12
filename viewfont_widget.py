@@ -37,6 +37,12 @@ class FontViewWidget(Gtk.ScrolledWindow):
     self.bg = (b"%c%c%c" % (font.bg['r'] >> 8, font.bg['g'] >> 8,
                            font.bg['b'] >> 8))
 
+    try:
+      self.mag = font.scale
+    except AttributeError:
+      # old font save without the scale attribute
+      self.mag = 1
+
     self.highlight_colour = Gdk.Color(65535, 0, 0)
     tc = self.get_style_context().get_background_color(Gtk.StateFlags.NORMAL)
     #print(tc)
@@ -66,7 +72,7 @@ class FontViewWidget(Gtk.ScrolledWindow):
             d += self.bg
       # now make a new pixbuf from this
       self.pbf.append(GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                      False, 8, font.cols, font.rows, font.cols * 3))
+                      False, 8, font.cols, font.rows, font.cols * 3).scale_simple(font.cols * self.mag, font.rows * self.mag, GdkPixbuf.InterpType.NEAREST))
 
       row = c / self.chars_per_line
       col = c % self.chars_per_line
@@ -92,7 +98,7 @@ class FontViewWidget(Gtk.ScrolledWindow):
           d += self.bg
     # now make a new pixbuf from this
     self.pbf[c] = GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                  False, 8, self.font.cols, self.font.rows, self.font.cols * 3)
+                  False, 8, self.font.cols, self.font.rows, self.font.cols * 3).scale_simple(self.font.cols * self.mag, self.font.rows * self.mag, GdkPixbuf.InterpType.NEAREST)
     self.img[c] = Gtk.Image.new_from_pixbuf(self.pbf[c])
     self.img[c].set_padding(1, 1)
 
@@ -114,6 +120,11 @@ class FontViewWidget(Gtk.ScrolledWindow):
   def set_colours(self, fr, fg, fb, br, bg, bb):
     self.fg = b"%c%c%c" % (fr >> 8, fg >> 8, fb >> 8)
     self.bg = b"%c%c%c" % (br >> 8, bg >> 8, bb >> 8)
+    for c in range(self.font.chars):
+      self.update(c)
+  
+  def set_scale(self, scale):
+    self.mag = scale
     for c in range(self.font.chars):
       self.update(c)
 

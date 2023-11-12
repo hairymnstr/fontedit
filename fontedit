@@ -168,7 +168,7 @@ class PrefsWindow(Gtk.Window):
   def __init__(self, parent):
     GObject.GObject.__init__(self)
     self._parent = parent
-    self.table = Gtk.Table(n_rows = 3, n_columns=2)
+    self.table = Gtk.Table(n_rows = 4, n_columns=2)
     self.add(self.table)
 
     self.fg_label = Gtk.Label(label="Foreground Colour")
@@ -176,6 +176,9 @@ class PrefsWindow(Gtk.Window):
   
     self.bg_label = Gtk.Label(label="Background Color")
     self.table.attach(self.bg_label, 0, 1, 1, 2)
+  
+    self.scale_label = Gtk.Label(label="Preview Scale")
+    self.table.attach(self.scale_label, 0, 1, 2, 3)
 
     self.fg_edit = Gtk.ColorButton.new_with_rgba(Gdk.RGBA(
                         self._parent.font.fg['r'] / 65535,
@@ -193,6 +196,16 @@ class PrefsWindow(Gtk.Window):
     self.bg_edit.set_title("Background Colour")
     self.table.attach(self.bg_edit, 1, 2, 1, 2)
 
+    self.scale_edit = Gtk.ComboBoxText()
+    self.scale_edit.set_entry_text_column(0)
+    self.scale_edit.append_text("1")
+    self.scale_edit.append_text("2")
+    self.scale_edit.append_text("4")
+    self.scale_edit.append_text("8")
+    self.scale_edit.append_text("16")
+    self.scale_edit.set_active(0)
+    self.table.attach(self.scale_edit, 1, 2, 2, 3)
+
     self.button_layout = Gtk.HButtonBox()
     self.button_layout.set_layout(Gtk.ButtonBoxStyle.END)
     self.ok_button = Gtk.Button.new_with_mnemonic("_OK")
@@ -201,7 +214,7 @@ class PrefsWindow(Gtk.Window):
     self.cancel_button = Gtk.Button.new_with_mnemonic("_Cancel")
     self.cancel_button.connect("clicked", self.cancel_cb)
     self.button_layout.pack_end(self.cancel_button, True, True, 0)
-    self.table.attach(self.button_layout, 0, 2, 2, 3)
+    self.table.attach(self.button_layout, 0, 2, 3, 4)
 
     self.connect("destroy", self.cancel_cb)
 
@@ -222,6 +235,7 @@ class PrefsWindow(Gtk.Window):
     self._parent.font.bg['r'] = int(bg.red * 65535)
     self._parent.font.bg['g'] = int(bg.green * 65535)
     self._parent.font.bg['b'] = int(bg.blue * 65535)
+    self._parent.font.scale = int(self.scale_edit.get_active_text())
     self._parent.update_colours()
 
     self._parent.set_sensitive(True)
@@ -335,7 +349,7 @@ class MainWindow(Gtk.Window):
     self.menubar = Gtk.MenuBar()
     self.main_vlayout.pack_start(self.menubar, False, True, 0)
 
-    self.main_hlayout = Gtk.HBox()
+    self.main_hlayout = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
     self.main_vlayout.pack_start(self.main_hlayout, True, True, 0)
 
     self.status_bar = Gtk.Statusbar()
@@ -404,7 +418,7 @@ class MainWindow(Gtk.Window):
     self.font_widget = None
 
     self.right_vlayout = Gtk.VBox()
-    self.main_hlayout.pack_end(self.right_vlayout, True, True, 0)
+    self.main_hlayout.add2(self.right_vlayout)
 
     self.update_button = Gtk.Button.new_with_mnemonic("_Update")
     self.update_button.connect("clicked", self.update_char_cb)
@@ -635,7 +649,7 @@ class MainWindow(Gtk.Window):
       self.font_widget.destroy()
       del self.font_widget
     self.font_widget = CharacterWidget(self.font)
-    self.main_hlayout.pack_start(self.font_widget, False, True, 0)
+    self.main_hlayout.add1(self.font_widget)
 
     if isinstance(self.font_view, FontViewWidget):
       self.font_view.destroy()
@@ -688,6 +702,7 @@ class MainWindow(Gtk.Window):
     self.font_widget.set_bg(bg['r'], bg['g'], bg['b'])
     self.font_view.set_colours(fg['r'], fg['g'], fg['b'],
                                bg['r'], bg['g'], bg['b'])
+    self.font_view.set_scale(self.font.scale)
     self.show_all()
 
   ### current_char - property; modifying updates all relevant display elements

@@ -33,6 +33,7 @@ class Font:
     self.changed = False
     self.fg = {'r': 65535, 'g': 65535, 'b': 65535}
     self.bg = {'r': 0, 'g': 0, 'b': 0}
+    self.scale = 1
 
   def get_rows(self):
     """ Number of rows of pixels in the character """
