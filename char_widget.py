@@ -16,8 +16,6 @@
 ##    along with Fontedit.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-import sys
-import os
 import gi
 
 gi.require_version('Gtk', '3.0')
@@ -25,113 +23,108 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import GObject
 from gi.repository import Gdk
-from gi.repository import GdkPixbuf
 
 class CharacterWidget(Gtk.EventBox):
-  def __init__(self, font):
-    GObject.GObject.__init__(self)
-    self.table = Gtk.Table(font.rows, font.cols, True)
-    self.add(self.table)
+    def __init__(self, font):
+        GObject.GObject.__init__(self)
+        self.set_size_request(100, 100)
+        self.drawing = Gtk.DrawingArea()
+        self.drawing.connect("draw", self.expose)
+        # event signals
+        self.drawing.connect('motion-notify-event', self.draw_motion_notify_event)
+        self.drawing.connect('button-press-event', self.draw_button_press_event)
 
-    self._colour_frame = Gdk.Color(0, 0, 0)
-    self._colour_bg = Gdk.Color(font.bg['r'], 
-                                    font.bg['g'],
-                                    font.bg['b'])
-    self._colour_fg = Gdk.Color(font.fg['r'],
-                                    font.fg['g'],
-                                    font.fg['b'])
-    d = bytes([font.fg['r']//256, font.fg['g']//256, font.fg['b']//256] * (32*32))
-    self.drag_active = GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                                                      False, 8, 32, 32, 32*3)
-    d = bytes([font.bg['r']//256, font.bg['g']//256, font.bg['b']//256] * (32*32))
-    self.drag_normal = GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                                                      False, 8, 32, 32, 32*3)
+        # Ask to receive events the drawing area doesn't normally
+        # subscribe to
+        self.drawing.set_events(self.drawing.get_events()
+                      | Gdk.EventMask.LEAVE_NOTIFY_MASK
+                      | Gdk.EventMask.BUTTON_PRESS_MASK
+                      | Gdk.EventMask.POINTER_MOTION_MASK
+                      | Gdk.EventMask.POINTER_MOTION_HINT_MASK)
+        self.add(self.drawing)
+
+        self.fg = (font.fg['r'] / 65535, font.fg['g'] / 65535, font.fg['b'] / 65535)
+        self.bg = (font.bg['r'] / 65535, font.bg['g'] / 65535, font.bg['b'] / 65535)
+        self.rows = font.rows
+        self.cols = font.cols
+
+        self.pixels = []
+        for y in range(font.rows):
+            self.pixels.append([])
+            for x in range(font.cols):
+                self.pixels[-1].append(0)
+
+        self._modified = False
+        self.drag_value = 0
+        self.show_all()
     
-    self.modify_bg(Gtk.StateType.NORMAL, self._colour_frame)
+    def expose(self, area, context):
+        context.scale(area.get_allocated_width(), area.get_allocated_height())
 
-    self.pixels = []
-    for i in range(font.rows):
-      self.pixels.append([])
-      for j in range(font.cols):
-        self.pixels[i].append(Gtk.EventBox())
-        self.pixels[i][j].modify_bg(Gtk.StateType.ACTIVE, self._colour_fg)
-        self.pixels[i][j].modify_bg(Gtk.StateType.NORMAL, self._colour_bg)
-        self.pixels[i][j].set_events(self.pixels[i][j].get_events() | Gdk.EventMask.POINTER_MOTION_MASK)
-        self.pixels[i][j].connect("button-press-event", self.pixel_click)
-        self.pixels[i][j].connect("drag-motion", self.pixel_drag2)
-        self.pixels[i][j].drag_source_set(Gdk.ModifierType.BUTTON1_MASK, [Gtk.TargetEntry.new(f"pix", Gtk.TargetFlags.SAME_APP, i*font.cols+j)], Gdk.DragAction.PRIVATE)
-        self.pixels[i][j].drag_dest_set(Gtk.DestDefaults.ALL, [Gtk.TargetEntry.new(f"pix", Gtk.TargetFlags.SAME_APP, i*font.cols+j)], Gdk.DragAction.PRIVATE)
-        self.pixels[i][j].set_size_request(28, 28)
-        self.table.attach(self.pixels[i][j], j, j+1, i, i+1, 
-                          xpadding=1, ypadding=1)
+        xstep = 1.0 / self.cols
+        ystep = 1.0 / self.rows
 
-    self._modified = False
-    self.show_all()
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if self.pixels[i][j]:
+                    context.set_source_rgb(*self.fg)
+                else:
+                    context.set_source_rgb(*self.bg)
+                context.rectangle(j*xstep, i*ystep, xstep*0.95, ystep*0.95)
+                context.fill()
+        
+        return True
 
-  def pixel_click(self, widget, *kw):
-    if widget.get_state() == Gtk.StateType.NORMAL:
-      widget.set_state(Gtk.StateType.ACTIVE)
-      self._drag_state = Gtk.StateType.ACTIVE
-      widget.drag_source_set_icon_pixbuf(self.drag_active)
-    else:
-      widget.set_state(Gtk.StateType.NORMAL)
-      self._drag_state = Gtk.StateType.NORMAL
-      widget.drag_source_set_icon_pixbuf(self.drag_normal)
-    self._modified = True
+    def draw_pixel(self, x, y, start=False):
+        width = self.drawing.get_allocated_width()
+        height = self.drawing.get_allocated_height()
+        ystep = 1.0 / self.rows
+        xstep = 1.0 / self.cols
+        x = x / width
+        y = y / height
 
-  def pixel_drag2(self, widget, content, x, y, time):
-    widget.set_state(self._drag_state)
+        pixel_row = int(y / ystep)
+        pixel_col = int(x / xstep)
 
-  def get_pixels(self):
-    ret = []
-    for i in range(len(self.pixels)):
-      ret.append([])
-      for j in range(len(self.pixels[0])):
-        if self.pixels[i][j].get_state() == Gtk.StateType.NORMAL:
-          ret[i].append(0)
-        else:
-          ret[i].append(1)
-    return ret;
+        if (0 <= pixel_row < self.rows) and (0 <= pixel_col < self.cols):
+            if start:
+                old_val = self.pixels[pixel_row][pixel_col]
+                self.drag_value = old_val ^ 1
+            self.pixels[pixel_row][pixel_col] = self.drag_value
+            self.drawing.queue_draw_area(pixel_col * xstep * width,
+                                        pixel_row * ystep * height,
+                                        xstep * width,
+                                        ystep * height)
 
-  def set_pixels(self, vals):
-    for i in range(len(self.pixels)):
-      for j in range(len(self.pixels[0])):
-        if vals[i][j] == 0:
-          self.pixels[i][j].set_state(Gtk.StateType.NORMAL)
-        else:
-          self.pixels[i][j].set_state(Gtk.StateType.ACTIVE)
-    self._modified = False
+    def draw_motion_notify_event(self, area, event):
+        (window, x, y, state) = event.window.get_pointer()
 
-  def clear_modified(self):
-    self._modified = False
+        if state & Gdk.ModifierType.BUTTON1_MASK:
+            self.draw_pixel(x, y)
+    
+    def draw_button_press_event(self, area, event):
+        if event.button == 1:
+            self.draw_pixel(event.x, event.y, start=True)
+            self._modified = True
 
-  def set_fg(self, r, g, b):
-    self._colour_fg = Gdk.Color(r, g, b)
-    for i in range(len(self.pixels)):
-      for j in range(len(self.pixels[0])):
-        self.pixels[i][j].modify_bg(Gtk.StateType.ACTIVE, self._colour_fg)
-    d = bytes([r//256, g//256, b//256] * (32*32))
-    self.drag_active = GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                                                      False, 8, 32, 32, 32*3)
+    def get_pixels(self):
+        return self.pixels
+    
+    def set_pixels(self, vals):
+        self.pixels = vals
+        self.drawing.queue_draw()
 
-  def set_bg(self, r, g, b):
-    self._colour_bg = Gdk.Color(r, g, b)
-    for i in range(len(self.pixels)):
-      for j in range(len(self.pixels[0])):
-        self.pixels[i][j].modify_bg(Gtk.StateType.NORMAL, self._colour_bg)
-    d = bytes([r//256, g//256, b//256] * (32*32))
-    self.drag_normal = GdkPixbuf.Pixbuf.new_from_data(d, GdkPixbuf.Colorspace.RGB,
-                                                      False, 8, 32, 32, 32*3)
+    def set_fg(self, r, g, b):
+        self.fg = (r / 65535, g / 65535, b / 65535)
+        self.drawing.queue_draw()
+    
+    def set_bg(self, r, g, b):
+        self.bg = (r / 65535, g / 65535, b / 65535)
+        self.drawing.queue_draw()
 
-  @property
-  def modified(self):
-    return self._modified
+    def clear_modified(self):
+        self._modified = False
 
-if __name__ == "__main__":
-  win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-  win.connect("destroy", lambda obj, *kw: Gtk.main_quit())
-  char = CharacterWidget(12, 8)
-  win.add(char)
-  win.show_all()
-  Gtk.main()
-
+    @property
+    def modified(self):
+        return self._modified
